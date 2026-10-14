@@ -1,10 +1,13 @@
-// ui.js: the Explore-mode lab: toolbar, board controller, stats, toasts.
+// ui.js: the 1P Explore screen: fighter roster, board controller, level
+// select, stats HUD, hint box and pop-up messages.
 
 import { Grid } from './grid.js';
 import { ALGORITHMS, getAlgorithm, solve } from './algorithms.js';
 import { MAZES, getMaze } from './mazes.js';
 import { Animator } from './animator.js';
-import { ExplainPanel } from './explain.js';
+import { HintBox, INFO, renderFighterCard } from './explain.js';
+import { spriteEl, sheetURL } from './sprites.js';
+import { sfx } from './sound.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 
@@ -15,10 +18,21 @@ export function toast(msg, ms = 3600) {
   t.textContent = msg;
   box.append(t);
   setTimeout(() => t.classList.add('out'), ms);
-  setTimeout(() => t.remove(), ms + 350);
+  setTimeout(() => t.remove(), ms + 300);
 }
 
-export const formatMs = (ms) => (ms < 1 ? `${(ms * 1000).toFixed(0)} µs` : `${ms.toFixed(2)} ms`);
+// Browsers round performance.now() (often to 0.1ms), so tiny runs read as "<0.1ms".
+export const formatMs = (ms) => (ms < 0.1 ? '<0.1ms' : `${ms.toFixed(ms < 10 ? 2 : 1)}ms`);
+
+/** Paint a board with a fighter's sprite on the start tile and its trail colour. */
+export function dressGrid(grid, algoId) {
+  const meta = getAlgorithm(algoId);
+  grid.el.style.setProperty('--hero', `url(${sheetURL(algoId)})`);
+  grid.el.style.setProperty('--visited', meta.visited);
+  grid.el.style.setProperty('--accent', meta.color);
+}
+
+export const levelLabel = (m) => (m.level ? `LEVEL ${m.level}` : m.name.toUpperCase());
 
 /** Grid dimensions per size preset; odd numbers so carved mazes fit exactly. */
 function sizePreset(key) {
@@ -31,53 +45,64 @@ function sizePreset(key) {
 }
 
 const STATUS_TEXT = {
-  idle: 'Ready. Draw some walls or generate a maze.',
-  generating: 'Building the maze…',
+  idle: 'READY. Draw walls or pick a level.',
+  generating: 'Building the level…',
 };
 
 export class Lab {
   constructor(app) {
     this.app = app;
-    this.root = $('#lab');
+    this.root = $('#game');
     this.grid = new Grid($('#grid'), sizePreset($('#size').value));
-    this.explain = new ExplainPanel($('#explain'));
+    this.hint = new HintBox($('#explain'));
     this.anim = new Animator(() => app.rate);
     this.algo = 'astar';
     this.status = 'idle';
     this.lastRun = null; // algorithm id of the last completed run (for live recompute)
+    this.level = 'CUSTOM';
     this.token = 0;
 
     this.buildPickers();
     this.bindControls();
-    this.explain.setAlgorithm(this.algo);
-    this.grid.onEdit = () => this.onEdit();
+    this.selectAlgorithm(this.algo, { quiet: true });
+    this.grid.onEdit = (type) => this.onEdit(type);
   }
 
   // ---------------- setup ----------------
 
   buildPickers() {
-    const algoPicker = $('#algo-picker');
-    algoPicker.innerHTML = ALGORITHMS.map((a) =>
-      `<button role="radio" data-algo="${a.id}" style="--c:${a.color}" title="${a.name}"><span class="dot"></span>${a.short}</button>`).join('');
-    algoPicker.addEventListener('click', (e) => {
+    const roster = $('#algo-picker');
+    for (const a of ALGORITHMS) {
+      const b = document.createElement('button');
+      b.className = 'fighter';
+      b.dataset.algo = a.id;
+      b.setAttribute('role', 'radio');
+      b.style.setProperty('--c', a.color);
+      b.append(spriteEl(a.id, 'sprite-md'));
+      b.insertAdjacentHTML('beforeend', `<span class="fighter-name">${INFO[a.id].hero}</span><span class="fighter-algo">${a.short}</span>`);
+      roster.append(b);
+    }
+    roster.addEventListener('click', (e) => {
       const b = e.target.closest('[data-algo]');
-      if (b) this.selectAlgorithm(b.dataset.algo);
+      if (b) { sfx.select(); this.selectAlgorithm(b.dataset.algo); }
     });
-    this.markActive(algoPicker, 'algo', this.algo);
 
-    const mazePicker = $('#maze-picker');
-    mazePicker.innerHTML = MAZES.map((m) => `<button data-maze="${m.id}" title="${m.full}">${m.name}</button>`).join('');
-    mazePicker.addEventListener('click', (e) => {
+    const levels = $('#maze-picker');
+    levels.innerHTML = MAZES.map((m) => m.level
+      ? `<button class="btn btn-level" data-maze="${m.id}" title="${m.full}"><b>LEVEL ${m.level}</b><small>${m.name}</small></button>`
+      : `<button class="btn btn-level btn-slime" data-maze="${m.id}" title="Add pools of slime"><b>+ SLIME</b><small>pools</small></button>`).join('');
+    levels.addEventListener('click', (e) => {
       const b = e.target.closest('[data-maze]');
       if (b) this.generate(b.dataset.maze);
     });
 
-    const toolPicker = $('#tool-picker');
-    toolPicker.addEventListener('click', (e) => {
+    const tools = $('#tool-picker');
+    tools.addEventListener('click', (e) => {
       const b = e.target.closest('[data-tool]');
       if (!b) return;
+      sfx.click();
       this.grid.tool = b.dataset.tool;
-      this.markActive(toolPicker, 'tool', b.dataset.tool);
+      this.markActive(tools, 'tool', b.dataset.tool);
     });
   }
 
@@ -92,25 +117,21 @@ export class Lab {
   bindControls() {
     $('#btn-run').addEventListener('click', () => this.runOrToggle());
     $('#btn-step').addEventListener('click', () => this.step());
-    $('#btn-clear-path').addEventListener('click', () => this.clearPath());
-    $('#btn-clear-board').addEventListener('click', () => this.clearBoard());
-    $('#btn-explain').addEventListener('click', () => this.toggleExplain());
+    $('#btn-clear-path').addEventListener('click', () => { sfx.click(); this.clearPath(); });
+    $('#btn-clear-board').addEventListener('click', () => { sfx.click(); this.clearBoard(); });
+    $('#btn-explain').addEventListener('click', () => { sfx.click(); this.toggleExplain(); });
     $('#explain-close').addEventListener('click', () => this.toggleExplain(false));
     $('#size').addEventListener('change', (e) => {
       this.stopAll();
       this.grid.build(...Object.values(sizePreset(e.target.value)));
+      this.level = 'CUSTOM';
       this.setStatus('idle');
     });
 
     document.addEventListener('keydown', (e) => {
-      if (e.target.closest('input, select, textarea, button') || this.app.mode !== 'explore') return;
-      if (e.code === 'Space' && this.inView()) { e.preventDefault(); this.runOrToggle(); }
+      if (e.target.closest?.('input, select, textarea, button') || this.app.screen !== 'game') return;
+      if (e.code === 'Space') { e.preventDefault(); this.runOrToggle(); }
     });
-  }
-
-  inView() {
-    const r = this.root.getBoundingClientRect();
-    return r.top < innerHeight * 0.6 && r.bottom > innerHeight * 0.4;
   }
 
   // ---------------- state ----------------
@@ -121,7 +142,7 @@ export class Lab {
     const locked = status === 'running' || status === 'paused' || status === 'generating';
     this.grid.locked = locked;
     this.grid.el.classList.toggle('locked', locked);
-    $('#run-label').textContent = status === 'running' ? 'Pause' : status === 'paused' ? 'Resume' : 'Visualize';
+    $('#run-label').textContent = status === 'running' ? 'PAUSE' : status === 'paused' ? 'RESUME' : 'START';
     $('#status-text').textContent = text || STATUS_TEXT[status] || '';
   }
 
@@ -132,13 +153,13 @@ export class Lab {
     this.grid.locked = false;
   }
 
-  setStats({ explored = '–', length = '–', cost = '–', time = '–' } = {}) {
+  setStats({ explored = '---', length = '---', cost = '---', time = '---' } = {}) {
     const set = (id, v) => {
       const el = $(id);
       const s = String(v);
       if (el.textContent === s) return;
       el.textContent = s;
-      if (s !== '–') { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+      if (s !== '---') { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
     };
     set('#stat-explored', explored);
     set('#stat-length', length);
@@ -149,32 +170,38 @@ export class Lab {
   resultStats(res, explored, ms) {
     return {
       explored,
-      length: res.found ? res.length : 'none',
-      cost: res.found ? res.cost : 'none',
+      length: res.found ? res.length : 'NONE',
+      cost: res.found ? res.cost : 'NONE',
       time: formatMs(ms),
     };
   }
 
   resultText(meta, res) {
-    if (!res.found) return `${meta.short} explored every reachable cell. The goal is walled off.`;
+    const hero = INFO[meta.id].hero;
+    if (!res.found) return `NO PATH! ${hero} searched everywhere. The goal is walled off.`;
     const note = meta.optimal ? (meta.weighted ? 'guaranteed cheapest' : 'fewest steps') : 'not necessarily the shortest';
-    return `${meta.short} found a path: ${res.length} steps, cost ${res.cost} (${note}). Drag the start, goal or walls to watch it update live.`;
+    return `GOAL! ${hero} found a path: ${res.length} steps, cost ${res.cost} (${note}). Drag the start, goal or walls to see it update.`;
   }
 
   // ---------------- actions ----------------
 
-  selectAlgorithm(id) {
+  selectAlgorithm(id, { quiet = false } = {}) {
     this.algo = id;
     this.markActive($('#algo-picker'), 'algo', id);
-    this.explain.setAlgorithm(id);
+    renderFighterCard($('#fighter-card'), id);
+    dressGrid(this.grid, id);
+    this.hint.setAlgorithm(id);
     if (this.status === 'done' || this.status === 'nopath') {
       this.lastRun = id;
       this.instant();
+    } else if (!quiet && this.status === 'idle') {
+      $('#status-text').textContent = `${INFO[id].hero} is ready. Press START.`;
     }
   }
 
   runOrToggle() {
-    if (this.status === 'running') { this.anim.pause(); this.setStatus('paused', 'Paused. Press Resume, or Step to go one move at a time.'); return; }
+    sfx.click();
+    if (this.status === 'running') { this.anim.pause(); this.setStatus('paused', 'PAUSED. Press RESUME, or STEP to go one move at a time.'); return; }
     if (this.status === 'paused') { this.anim.resume(); this.setStatus('running', this.runningText()); return; }
     if (this.status === 'generating') return;
     this.run();
@@ -182,16 +209,17 @@ export class Lab {
 
   step() {
     if (this.status === 'generating') return;
+    sfx.click();
     if (this.status === 'running' || this.status === 'paused') {
       this.anim.step();
-      if (this.status === 'running') this.setStatus('paused', 'Stepping. Press Step again or Resume.');
+      if (this.status === 'running') this.setStatus('paused', 'STEP MODE. Press STEP again or RESUME.');
       return;
     }
     this.run({ paused: true });
     this.anim.step();
   }
 
-  runningText() { return `${getAlgorithm(this.algo).name} is exploring…`; }
+  runningText() { return `${INFO[this.algo].hero} is exploring…`; }
 
   async run({ paused = false } = {}) {
     this.stopAll();
@@ -204,15 +232,15 @@ export class Lab {
 
     // Time a silent run separately so the animation doesn't inflate the number.
     const { ms } = solve(meta, graph);
-    if (!meta.weighted && grid.hasMud()) toast(`Heads up: ${meta.short} ignores mud. It treats every cell as costing 1.`);
+    if (!meta.weighted && grid.hasMud()) toast(`HEADS UP: ${INFO[meta.id].hero} ignores slime and treats every tile as cost 1.`);
 
-    this.explain.reset(`Running ${meta.name}. Watch the board, or read along here.`);
+    this.hint.reset(`${INFO[meta.id].hero} enters the maze. Watch the board, or read along here.`);
     this.setStats({ explored: 0 });
-    this.setStatus(paused ? 'paused' : 'running', paused ? 'Stepping. Press Step again or Resume.' : this.runningText());
+    this.setStatus(paused ? 'paused' : 'running', paused ? 'STEP MODE. Press STEP again or RESUME.' : this.runningText());
 
     let explored = 0;
     let result = null;
-    const pathStagger = Math.max(6, 42 - this.app.speed * 0.34);
+    const pathStagger = Math.max(15, 60 - this.app.speed * 0.45);
     const ok = await this.anim.run(meta.run(graph, { narrate: true }), {
       paused,
       onStep: (s) => {
@@ -221,12 +249,14 @@ export class Lab {
           grid.markVisited(s.id);
           grid.setCurrent(s.id);
           for (const f of s.frontier) grid.markFrontier(f);
-          this.explain.push(s.msg);
+          this.hint.push(s.msg);
+          sfx.explore(explored);
         } else {
           result = s;
           grid.setCurrent(-1);
           grid.markPath(s.path, pathStagger);
-          this.explain.push(s.msg, 'done');
+          this.hint.push(s.msg, 'done');
+          if (s.found) sfx.found(); else sfx.fail();
         }
       },
       onFrame: () => { if (token === this.token) this.setStats({ explored }); },
@@ -251,7 +281,8 @@ export class Lab {
     this.setStatus(result.found ? 'done' : 'nopath', this.resultText(meta, result));
   }
 
-  onEdit() {
+  onEdit(type) {
+    if (type === 'paint') this.level = 'CUSTOM';
     if ((this.status === 'done' || this.status === 'nopath') && this.lastRun) this.instant();
   }
 
@@ -260,13 +291,14 @@ export class Lab {
     this.grid.clearVisuals();
     this.lastRun = null;
     this.setStats();
-    this.explain.reset();
+    this.hint.reset();
     this.setStatus('idle');
   }
 
   clearBoard() {
     this.clearPath();
     this.grid.clearTerrain();
+    this.level = 'CUSTOM';
   }
 
   applyMazeOp(op) {
@@ -296,23 +328,24 @@ export class Lab {
     this.lastRun = null;
     this.setStats();
     if (maze.carves) this.grid.snapEndpoints();
+    if (maze.level) this.level = levelLabel(maze);
     this.markActive($('#maze-picker'), 'maze', id);
-    this.setStatus('generating', `Generating: ${maze.full}…`);
-    this.explain.reset(maze.id === 'mud'
-      ? 'Sprinkling mud. Stepping into a mud cell costs 5 instead of 1. Only Dijkstra and A* take that into account.'
-      : `Generating a maze with ${maze.full}.`);
+    this.setStatus('generating', maze.level ? `LOADING ${levelLabel(maze)}: ${maze.full}…` : 'Pouring slime…');
+    this.hint.reset(maze.id === 'mud'
+      ? 'Slime! Stepping into a slime tile costs 5 instead of 1. Only Dijkstra and Astra are smart enough to go around it.'
+      : `${levelLabel(maze)}: ${maze.full}. Watch the maze carve itself.`);
 
     const ok = await this.anim.run(maze.run(this.mazeInput()), {
       rateScale: 4,
-      onStep: (op) => this.applyMazeOp(op),
+      onStep: (op) => { this.applyMazeOp(op); sfx.carve(); },
     });
     if (token !== this.token) return;
     this.grid.setCurrent(-1);
     this.markActive($('#maze-picker'), 'maze', null);
-    this.setStatus('idle', ok ? `${maze.full} is ready. Pick an algorithm and press Visualize.` : undefined);
+    this.setStatus('idle', ok ? `${maze.level ? levelLabel(maze) : 'SLIME'} READY. Press START.` : undefined);
   }
 
-  /** Generate without animation (used by race mode's quick-maze buttons). */
+  /** Generate without animation (used on load and by the VS screen's level buttons). */
   generateInstant(id) {
     const maze = getMaze(id);
     this.stopAll();
@@ -320,23 +353,23 @@ export class Lab {
     this.lastRun = null;
     this.setStats();
     if (maze.carves) this.grid.snapEndpoints();
+    if (maze.level) this.level = levelLabel(maze);
     for (const op of maze.run(this.mazeInput())) this.applyMazeOp(op);
     this.grid.setCurrent(-1);
-    this.setStatus('idle', `${maze.full} is ready.`);
+    this.setStatus('idle', `${maze.level ? levelLabel(maze) : 'SLIME'} READY. Press START.`);
   }
 
   toggleExplain(force) {
-    const ws = $('#workspace');
-    const on = force ?? !ws.classList.contains('with-explain');
-    ws.classList.toggle('with-explain', on);
+    const box = $('#explain');
+    const on = force ?? box.hidden;
+    box.hidden = !on;
     $('#btn-explain').setAttribute('aria-pressed', on);
-    if (on && this.app.speed > 45 && this.status !== 'running') {
-      toast('Tip: lower the speed to read along comfortably.');
-    }
+    if (on) this.hint.setAlgorithm(this.algo);
+    if (on && this.app.speed > 45 && this.status !== 'running') toast('TIP: Lower the speed to read along.');
   }
 
-  /** Called when leaving Explore mode. */
+  /** Called when leaving the Explore screen. */
   pauseIfRunning() {
-    if (this.status === 'running') { this.anim.pause(); this.setStatus('paused', 'Paused.'); }
+    if (this.status === 'running') { this.anim.pause(); this.setStatus('paused', 'PAUSED.'); }
   }
 }

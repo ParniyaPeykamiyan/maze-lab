@@ -1,4 +1,4 @@
-// race.js: run 2–4 algorithms side by side on identical copies of the maze.
+// race.js: the VS battle: 2–4 fighters race on identical copies of the maze.
 //
 // All racers advance in lockstep (one expansion each per tick), so "time on
 // screen" is a fair proxy for how much work each algorithm does.
@@ -8,10 +8,10 @@ import { ALGORITHMS, getAlgorithm, solve } from './algorithms.js';
 import { MAZES } from './mazes.js';
 import { Animator } from './animator.js';
 import { INFO } from './explain.js';
-import { $, toast, formatMs } from './ui.js';
-
-const TROPHY = `<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 3h10v2h3v3a4 4 0 0 1-4 4h-.35A5 5 0 0 1 13 14.9V18h3v3H8v-3h3v-3.1A5 5 0 0 1 8.35 12H8a4 4 0 0 1-4-4V5h3V3Zm10 4v3a2 2 0 0 0 1-1.73V7h-1ZM6 7v1.27A2 2 0 0 0 7 10V7H6Z"/></svg>`;
-const CROWN = `<svg class="crown" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m3 7 4.5 4L12 4l4.5 7L21 7l-2 12H5L3 7Z"/></svg>`;
+import { spriteEl } from './sprites.js';
+import { sfx } from './sound.js';
+import { qualifies, saveScore, initialsPicker } from './scores.js';
+import { $, toast, formatMs, dressGrid } from './ui.js';
 
 /** Advance every unfinished racer by one step per tick. */
 function* lockstep(racers, apply) {
@@ -27,59 +27,79 @@ function* lockstep(racers, apply) {
 }
 
 const fmtTime = (ms) => `${(ms / 1000).toFixed(2)}s`;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Winner's score: path efficiency (path tiles ÷ tiles explored, so 1.0 means
+ * it explored nothing but the path) x 10000, plus 1000 per rival in the race.
+ */
+export const raceScore = (r, racers) =>
+  Math.round((10000 * (r.result.length + 1)) / r.explored) + 1000 * (racers - 1);
 
 export class Race {
   constructor(app, lab) {
     this.app = app;
     this.lab = lab;
-    this.selected = ['astar', 'dijkstra', 'greedy', 'dfs'];
+    this.selected = ['astar', 'dijkstra', 'dfs', 'greedy'];
     this.anim = new Animator(() => app.rate);
     this.racers = [];
-    this.state = 'idle'; // idle | running | paused | finished
+    this.state = 'idle'; // idle | countdown | running | paused | finished
     this.token = 0;
-
     this.buildControls();
   }
 
   buildControls() {
-    const chips = $('#race-chips');
-    chips.innerHTML = ALGORITHMS.map((a) =>
-      `<button class="chip" data-algo="${a.id}" style="--c:${a.color}" aria-pressed="false"><span class="dot"></span>${a.short}</button>`).join('');
-    chips.addEventListener('click', (e) => {
+    const roster = $('#race-chips');
+    for (const a of ALGORITHMS) {
+      const b = document.createElement('button');
+      b.className = 'fighter fighter-vs';
+      b.dataset.algo = a.id;
+      b.style.setProperty('--c', a.color);
+      b.setAttribute('aria-pressed', 'false');
+      b.append(spriteEl(a.id, 'sprite-md'));
+      b.insertAdjacentHTML('beforeend', `<span class="fighter-name">${INFO[a.id].hero}</span><span class="fighter-algo">${a.short}</span><span class="ptag"></span>`);
+      roster.append(b);
+    }
+    roster.addEventListener('click', (e) => {
       const b = e.target.closest('[data-algo]');
       if (b) this.toggleRacer(b.dataset.algo);
     });
     this.syncChips();
 
-    const mazes = $('#race-maze');
-    mazes.innerHTML = MAZES.map((m) => `<button data-maze="${m.id}" title="${m.full}">${m.id === 'mud' ? '+ Mud' : m.name}</button>`).join('');
-    mazes.addEventListener('click', (e) => {
+    const levels = $('#race-maze');
+    levels.innerHTML = MAZES.map((m) => `<button class="btn btn-sm" data-maze="${m.id}" title="${m.full}">${m.level ? `LV${m.level}` : '+SLIME'}</button>`).join('');
+    levels.addEventListener('click', (e) => {
       const b = e.target.closest('[data-maze]');
-      if (!b) return;
+      if (!b || this.state === 'countdown') return;
+      sfx.carve();
       this.lab.generateInstant(b.dataset.maze);
       this.prepare();
     });
 
     $('#race-start').addEventListener('click', () => this.startOrToggle());
-    $('#race-reset').addEventListener('click', () => this.prepare());
+    $('#race-reset').addEventListener('click', () => { sfx.click(); this.prepare(); });
     $('#race-banner').addEventListener('click', (e) => {
       const a = e.target.closest('[data-action]');
       if (!a) return;
+      sfx.click();
       if (a.dataset.action === 'again') this.start();
+      else if (a.dataset.action === 'scores') this.app.go('scores');
       else this.hideBanner();
     });
   }
 
   toggleRacer(id) {
+    if (this.state === 'countdown') return;
     const i = this.selected.indexOf(id);
     if (i >= 0) {
-      if (this.selected.length <= 2) { toast('A race needs at least 2 algorithms.'); return; }
+      if (this.selected.length <= 2) { toast('A battle needs at least 2 fighters.'); return; }
       this.selected.splice(i, 1);
     } else {
-      if (this.selected.length >= 4) { toast('Up to 4 racers at once. Remove one first.'); return; }
+      if (this.selected.length >= 4) { toast('Max 4 fighters. Remove one first.'); return; }
       this.selected.push(id);
     }
-    // keep a stable order matching the chip order
+    sfx.select();
+    // keep a stable order matching the roster
     this.selected.sort((a, b) => ALGORITHMS.findIndex((x) => x.id === a) - ALGORITHMS.findIndex((x) => x.id === b));
     this.syncChips();
     this.prepare();
@@ -87,15 +107,17 @@ export class Race {
 
   syncChips() {
     for (const b of $('#race-chips').children) {
-      const on = this.selected.includes(b.dataset.algo);
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-pressed', on);
+      const idx = this.selected.indexOf(b.dataset.algo);
+      b.classList.toggle('on', idx >= 0);
+      b.setAttribute('aria-pressed', idx >= 0);
+      b.querySelector('.ptag').textContent = idx >= 0 ? `P${idx + 1}` : '';
     }
   }
 
   setState(state) {
     this.state = state;
-    $('#race-label').textContent = state === 'running' ? 'Pause' : state === 'paused' ? 'Resume' : state === 'finished' ? 'Race again' : 'Start race';
+    $('#race-label').textContent = { running: 'PAUSE', paused: 'RESUME', finished: 'REMATCH', countdown: 'READY…' }[state] || 'FIGHT!';
+    $('#race-start').disabled = state === 'countdown';
   }
 
   /** Build one panel + board per racer, each loaded with a copy of the lab maze. */
@@ -103,29 +125,34 @@ export class Race {
     this.token++;
     this.anim.stop();
     this.hideBanner();
+    $('#race-countdown').hidden = true;
     const snap = this.lab.grid.snapshot();
     const panels = $('#race-panels');
     panels.replaceChildren();
+    panels.dataset.count = this.selected.length;
 
     this.racers = this.selected.map((id, i) => {
       const meta = getAlgorithm(id);
       const panel = document.createElement('div');
       panel.className = 'race-panel';
-      panel.style.setProperty('--accent', meta.color);
-      panel.style.animationDelay = `${i * 60}ms`;
-      panel.innerHTML = `<header><h4><span class="dot"></span>${meta.name}${CROWN}</h4><span class="pill">ready</span></header><div class="race-grid"></div>`;
+      panel.style.setProperty('--c', meta.color);
+      panel.innerHTML = `<header><span class="ptag">P${i + 1}</span><span class="pname">${INFO[id].hero}</span><span class="pill">READY</span></header><div class="crt-screen"><div class="race-grid"></div></div>`;
+      panel.querySelector('header').prepend(spriteEl(id, 'sprite-sm'));
       panels.append(panel);
       const grid = new Grid(panel.querySelector('.race-grid'), { rows: snap.rows, cols: snap.cols, interactive: false });
       grid.load(snap);
-      return { meta, panel, grid, pill: panel.querySelector('.pill'), explored: 0, done: false, result: null, time: 0 };
+      dressGrid(grid, id);
+      return { meta, player: i + 1, panel, grid, pill: panel.querySelector('.pill'), explored: 0, done: false, result: null, time: 0 };
     });
     this.renderBoard();
     this.setState('idle');
   }
 
   startOrToggle() {
-    if (this.state === 'running') { this.anim.pause(); this.setState('paused'); this.setPills('paused'); return; }
-    if (this.state === 'paused') { this.anim.resume(); this.setState('running'); this.setPills('racing…'); return; }
+    sfx.click();
+    if (this.state === 'running') { this.anim.pause(); this.setState('paused'); this.setPills('PAUSED'); return; }
+    if (this.state === 'paused') { this.anim.resume(); this.setState('running'); this.setPills('GO!'); return; }
+    if (this.state === 'countdown') return;
     this.start();
   }
 
@@ -133,21 +160,37 @@ export class Race {
     for (const r of this.racers) if (!r.result) r.pill.textContent = text;
   }
 
+  async countdown(token) {
+    const el = $('#race-countdown');
+    el.hidden = false;
+    for (const n of ['3', '2', '1', 'GO!']) {
+      if (token !== this.token) return false;
+      el.innerHTML = `<span class="count ${n === 'GO!' ? 'go' : ''}">${n}</span>`;
+      if (n === 'GO!') sfx.go(); else sfx.count();
+      await wait(n === 'GO!' ? 500 : 650);
+    }
+    el.hidden = true;
+    return token === this.token;
+  }
+
   async start() {
     this.prepare();
     const token = this.token;
+    this.setState('countdown');
     for (const r of this.racers) {
       const graph = r.grid.toGraph();
       r.cpu = solve(r.meta, graph).ms;
       r.iter = r.meta.run(graph, { narrate: false });
-      r.pill.className = 'pill running';
-      r.pill.textContent = 'racing…';
     }
+    if (!(await this.countdown(token))) return;
+
     if (this.lab.grid.hasMud() && this.racers.some((r) => !r.meta.weighted)) {
-      toast('There is mud on this maze. Only Dijkstra and A* will route around it.');
+      toast('Slime on the course! Only Dijkstra and Astra will go around it.');
     }
+    for (const r of this.racers) { r.pill.className = 'pill running'; r.pill.textContent = 'GO!'; }
     this.setState('running');
-    const stagger = Math.max(5, 30 - this.app.speed * 0.25);
+    const stagger = Math.max(12, 40 - this.app.speed * 0.3);
+    let ticks = 0;
 
     const ok = await this.anim.run(lockstep(this.racers, (r, s) => {
       if (s.type === 'visit') {
@@ -163,10 +206,11 @@ export class Race {
         r.grid.markPath(s.path, stagger);
         r.panel.classList.add('finished');
         r.pill.className = s.found ? 'pill done' : 'pill fail';
-        r.pill.textContent = s.found ? `done in ${fmtTime(r.time)}` : 'no path';
+        r.pill.textContent = s.found ? `GOAL ${fmtTime(r.time)}` : 'NO PATH';
+        sfx.finish();
       }
     }), {
-      onStep: () => {},
+      onStep: () => sfx.explore(++ticks),
       onFrame: () => { if (token === this.token) this.renderBoard(); },
     });
     if (!ok || token !== this.token) return;
@@ -181,20 +225,19 @@ export class Race {
   renderBoard() {
     const finished = this.state === 'finished';
     const list = finished ? this.ranked() : this.racers;
-    const leader = finished ? list[0] : null;
     $('#race-board').innerHTML = list.map((r, i) => {
       const res = r.result;
       const time = res ? r.time : this.anim.running ? this.anim.elapsed : 0;
-      const path = res ? (res.found ? res.length : '✕') : '–';
-      const cost = res ? (res.found ? res.cost : '✕') : '–';
-      const lead = leader === r && res && res.found;
+      const path = res ? (res.found ? res.length : 'X') : '-';
+      const cost = res ? (res.found ? res.cost : 'X') : '-';
+      const lead = finished && i === 0 && res && res.found;
       return `<tr class="${lead ? 'lead' : ''}" style="--c:${r.meta.color}">
-        <td>${finished ? i + 1 : '·'}</td>
-        <td class="name"><span class="dot"></span>${r.meta.short}</td>
+        <td>${finished ? i + 1 : '-'}</td>
+        <td class="name">P${r.player} ${INFO[r.meta.id].hero}</td>
         <td>${r.explored}</td>
         <td>${path}</td>
         <td>${cost}</td>
-        <td>${fmtTime(time)}${finished && r.cpu != null ? `<span class="sub">cpu ${formatMs(r.cpu)}</span>` : ''}</td>
+        <td>${fmtTime(time)}${finished && r.cpu != null ? `<span class="sub">CPU ${formatMs(r.cpu)}</span>` : ''}</td>
       </tr>`;
     }).join('');
   }
@@ -207,16 +250,17 @@ export class Race {
     const banner = $('#race-banner');
 
     if (!winner.result.found) {
-      banner.innerHTML = `<div class="banner-card" style="--accent: var(--rose)">
-        <p class="kicker">Race over</p>
-        <h3>Nobody made it</h3>
-        <p>The goal is unreachable on this maze. Go back to Explore, clear a few walls and try again.</p>
-        <div class="banner-actions"><button class="btn btn-ghost" data-action="close">Close</button></div>
+      sfx.fail();
+      banner.innerHTML = `<div class="winner-card" style="--c:#FF004D">
+        <h3 class="win-big">GAME OVER</h3>
+        <p>Nobody reached the goal. It's walled off. Go back to 1P EXPLORE, clear a few walls and try again.</p>
+        <div class="btn-row"><button class="btn" data-action="close">CONTINUE</button></div>
       </div>`;
-      banner.hidden = false;
+      this.showBanner();
       return;
     }
 
+    sfx.win();
     const runnerUp = ranked[1];
     const tie = runnerUp && runnerUp.result.found && runnerUp.result.cost === winner.result.cost && runnerUp.explored === winner.explored;
     const finishers = this.racers.filter((r) => r.result.found);
@@ -224,46 +268,62 @@ export class Race {
     winner.panel.classList.add('winner');
     if (tie) runnerUp.panel.classList.add('winner');
 
-    const lines = [];
-    lines.push(`Found the cheapest route (<b>cost ${winner.result.cost}</b>, ${winner.result.length} steps) after exploring <b>${winner.explored}</b> cells.`);
+    const hero = INFO[winner.meta.id].hero;
+    const score = raceScore(winner, this.racers.length);
+    const lines = [`${hero} found the cheapest route: cost ${winner.result.cost}, ${winner.result.length} steps, exploring ${winner.explored} tiles.`];
     if (fastest !== winner && fastest.result.cost > winner.result.cost) {
-      lines.push(`${fastest.meta.short} crossed the line first, but its path cost ${fastest.result.cost}. That's ${fastest.result.cost - winner.result.cost} more.`);
+      lines.push(`${INFO[fastest.meta.id].hero} reached the goal first, but paid ${fastest.result.cost - winner.result.cost} more.`);
     }
-    const title = tie
-      ? `It's a tie: <span>${winner.meta.short}</span> &amp; <span style="--accent:${runnerUp.meta.color}">${runnerUp.meta.short}</span>`
-      : `<span>${winner.meta.short}</span> wins!`;
+    const title = tie ? 'DRAW GAME!' : `PLAYER ${winner.player} WINS`;
+    const sub = tie ? `P${winner.player} ${hero} &amp; P${runnerUp.player} ${INFO[runnerUp.meta.id].hero}` : `${hero} · ${INFO[winner.meta.id].title}`;
 
-    banner.innerHTML = `<div class="banner-card" style="--accent:${winner.meta.color}">
-      <div class="confetti">${this.confetti()}</div>
-      <div class="trophy">${TROPHY}</div>
-      <p class="kicker">Race results</p>
-      <h3>${title}</h3>
+    banner.innerHTML = `<div class="winner-card" style="--c:${winner.meta.color}">
+      <div class="winner-sprite"></div>
+      <h3 class="win-big">${title}</h3>
+      <p class="win-sub">${sub}</p>
       ${lines.map((l) => `<p>${l}</p>`).join('')}
       <p class="why">${INFO[winner.meta.id].insight}</p>
-      <div class="banner-actions">
-        <button class="btn btn-primary" data-action="again">Race again</button>
-        <button class="btn btn-ghost" data-action="close">See the boards</button>
+      <p class="win-score">SCORE <b>${String(score).padStart(6, '0')}</b></p>
+      <div class="score-entry"></div>
+      <div class="btn-row">
+        <button class="btn btn-go" data-action="again">REMATCH</button>
+        <button class="btn" data-action="scores">HI-SCORES</button>
+        <button class="btn btn-dark" data-action="close">VIEW BOARDS</button>
       </div>
     </div>`;
-    banner.hidden = false;
+    banner.querySelector('.winner-sprite').append(spriteEl(winner.meta.id, 'sprite-xxl'));
+    this.showBanner();
+
+    const entry = banner.querySelector('.score-entry');
+    this.app.setScore(score);
+    if (qualifies(score)) {
+      entry.insertAdjacentHTML('beforebegin', '<p class="new-hi">NEW HIGH SCORE! ENTER YOUR INITIALS</p>');
+      initialsPicker(entry, (name) => {
+        const rank = saveScore({ name, score, fighter: winner.meta.id, level: this.lab.level, date: Date.now() });
+        sfx.saved();
+        banner.querySelector('.new-hi').textContent = rank >= 0 ? `SAVED! ${name} IS RANK #${rank + 1}` : 'SAVED!';
+        entry.remove();
+        this.app.refreshScores();
+      });
+    } else {
+      entry.innerHTML = '<p class="note">Not enough for the high-score table this time.</p>';
+    }
   }
 
-  confetti() {
-    const colors = ['#22e4ff', '#ff3ec8', '#ffb627', '#a78bfa', '#34d399'];
-    let html = '';
-    for (let i = 0; i < 36; i++) {
-      html += `<i style="left:${Math.random() * 100}%;background:${colors[i % colors.length]};animation-delay:${Math.random() * 0.6}s;animation-duration:${1.6 + Math.random() * 1.4}s"></i>`;
-    }
-    return html;
+  showBanner() {
+    $('#race-banner').hidden = false;
+    $('#race-arena').classList.add('show-result');
   }
 
   hideBanner() {
     $('#race-banner').hidden = true;
+    $('#race-arena').classList.remove('show-result');
   }
 
-  enter() { if (this.state !== 'running' && this.state !== 'paused') this.prepare(); }
+  enter() { if (this.state !== 'running' && this.state !== 'paused' && this.state !== 'countdown') this.prepare(); }
 
   leave() {
-    if (this.state === 'running') { this.anim.pause(); this.setState('paused'); this.setPills('paused'); }
+    if (this.state === 'countdown') this.prepare();
+    if (this.state === 'running') { this.anim.pause(); this.setState('paused'); this.setPills('PAUSED'); }
   }
 }

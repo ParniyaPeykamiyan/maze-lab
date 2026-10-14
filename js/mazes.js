@@ -156,11 +156,12 @@ export function* mudPatches({ rows, cols, start, end, walls }) {
   }
 }
 
+// The arcade presents these as levels; 'mud' is shown as slime.
 export const MAZES = [
-  { id: 'backtracker', name: 'Backtracker', full: 'Recursive backtracking', carves: true, run: backtracker },
-  { id: 'prim', name: "Prim's", full: "Randomised Prim's", carves: true, run: prim },
-  { id: 'random', name: 'Random', full: 'Random walls', carves: false, run: randomWalls },
-  { id: 'mud', name: 'Mud', full: 'Sprinkle mud', carves: false, run: mudPatches },
+  { id: 'random', level: 1, name: 'Random', full: 'Random walls', carves: false, run: randomWalls },
+  { id: 'backtracker', level: 2, name: 'Backtracker', full: 'Recursive backtracking', carves: true, run: backtracker },
+  { id: 'prim', level: 3, name: "Prim's", full: "Randomised Prim's", carves: true, run: prim },
+  { id: 'mud', name: 'Slime', full: 'Slime pools', carves: false, run: mudPatches },
 ];
 
 export const getMaze = (id) => MAZES.find((m) => m.id === id);

@@ -58,7 +58,7 @@ function finish(g, prev, found, explored, narrate) {
   let msg = '';
   if (narrate) {
     msg = found
-      ? `Goal reached! The path is ${plural(length, 'step')} long${cost !== length ? ` and costs ${cost}, because mud counts extra` : ''}. It took ${plural(explored, 'explored cell')} to find it.`
+      ? `Goal reached! The path is ${plural(length, 'step')} long${cost !== length ? ` and costs ${cost}, because slime counts extra` : ''}. It took ${plural(explored, 'explored cell')} to find it.`
       : `No path exists. All ${explored} reachable cells were explored and the goal was never found, so it must be walled off.`;
   }
   return { type: 'done', found, path, length, cost, explored, msg };
@@ -101,7 +101,7 @@ export function* dijkstra(g, { narrate = true } = {}) {
     if (narrate) {
       msg = u === g.start
         ? `Starting at ${g.label(u)} with cost 0. Dijkstra always expands whichever known cell is cheapest to reach. ${plural(frontier.length, 'neighbour')} added to the queue.`
-        : `${g.label(u)} is the cheapest unexplored cell (total cost ${dist[u]}${g.isMud(u) ? ', including mud' : ''}). ` +
+        : `${g.label(u)} is the cheapest unexplored cell (total cost ${dist[u]}${g.isMud(u) ? ', including slime' : ''}). ` +
           (frontier.length ? `Found cheaper routes to ${plural(frontier.length, 'neighbour')}.` : 'No neighbour got a cheaper route through here.');
     }
     yield { type: 'visit', id: u, frontier, msg };
@@ -280,12 +280,13 @@ export function* dfs(g, { narrate = true } = {}) {
 
 // ---------------------------------------------------------------------------
 
+// color: the fighter's accent; visited: the trail it leaves on the board.
 export const ALGORITHMS = [
-  { id: 'astar', name: 'A* Search', short: 'A*', color: '#22e4ff', weighted: true, optimal: true, run: astar },
-  { id: 'dijkstra', name: "Dijkstra's Algorithm", short: 'Dijkstra', color: '#a78bfa', weighted: true, optimal: true, run: dijkstra },
-  { id: 'bfs', name: 'Breadth-First Search', short: 'BFS', color: '#34d399', weighted: false, optimal: true, run: bfs },
-  { id: 'dfs', name: 'Depth-First Search', short: 'DFS', color: '#ff3ec8', weighted: false, optimal: false, run: dfs },
-  { id: 'greedy', name: 'Greedy Best-First', short: 'Greedy', color: '#ffb627', weighted: false, optimal: false, run: greedy },
+  { id: 'astar', name: 'A* Search', short: 'A*', color: '#29ADFF', visited: '#1D2B53', weighted: true, optimal: true, run: astar },
+  { id: 'dijkstra', name: "Dijkstra's Algorithm", short: 'Dijkstra', color: '#FF77A8', visited: '#7E2553', weighted: true, optimal: true, run: dijkstra },
+  { id: 'bfs', name: 'Breadth-First Search', short: 'BFS', color: '#00E436', visited: '#008751', weighted: false, optimal: true, run: bfs },
+  { id: 'dfs', name: 'Depth-First Search', short: 'DFS', color: '#FF004D', visited: '#5F574F', weighted: false, optimal: false, run: dfs },
+  { id: 'greedy', name: 'Greedy Best-First', short: 'Greedy', color: '#FFA300', visited: '#AB5236', weighted: false, optimal: false, run: greedy },
 ];
 
 export const getAlgorithm = (id) => ALGORITHMS.find((a) => a.id === id);
