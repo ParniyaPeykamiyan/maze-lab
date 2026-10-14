@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maze Lab — Pathfinding Algorithm Visualizer</title>
+  <meta name="description" content="Maze Lab is an interactive pathfinding visualizer. Draw mazes, generate them, add mud, and watch Dijkstra, A*, BFS, DFS and Greedy Best-First search race to the goal.">
+  <meta name="theme-color" content="#05070f">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+  <script>document.documentElement.classList.add('js');</script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="Maze Lab home">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="29" height="29" rx="8" fill="none" stroke="url(#bm)" stroke-width="2.5"/>
+        <path d="M8 9h10v7h6M8 16v7h9" fill="none" stroke="url(#bm)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="24" cy="23" r="2.6" fill="#ff3ec8"/>
+        <defs><linearGradient id="bm" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22e4ff"/><stop offset="1" stop-color="#ff3ec8"/></linearGradient></defs>
+      </svg>
+      <span>Maze<b>Lab</b></span>
+    </a>
+    <nav class="nav" aria-label="Main">
+      <a href="#how">How it works</a>
+      <a href="#lab" data-goto="explore">Lab</a>
+      <a href="#lab" data-goto="race">Race</a>
+      <a href="#learn">Algorithms</a>
+    </nav>
+    <a class="btn btn-sm btn-ghost topbar-cta" href="#lab" data-goto="explore">Launch lab</a>
+  </header>
+
+  <main>
+    <!-- ============ HERO ============ -->
+    <section id="home" class="hero">
+      <canvas id="hero-canvas" aria-hidden="true"></canvas>
+      <div class="hero-veil" aria-hidden="true"></div>
+      <div class="hero-content">
+        <p class="eyebrow"><span class="pulse-dot"></span>Pathfinding, visualized</p>
+        <h1>Watch algorithms <span class="grad">find their way.</span></h1>
+        <p class="lead">Every time your phone plans a route or a game character chases you around a corner, a <em>pathfinding algorithm</em> is quietly searching for the best way through. Maze Lab lets you watch that search happen, cell by cell, decision by decision.</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="#lab" data-goto="explore">Open the lab
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-5 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a class="btn btn-ghost btn-lg" href="#lab" data-goto="race">Start a race</a>
+        </div>
+        <ul class="hero-facts">
+          <li><b>5</b><span>algorithms</span></li>
+          <li><b>3</b><span>maze generators</span></li>
+          <li><b>0</b><span>code required</span></li>
+        </ul>
+      </div>
+      <a class="scroll-hint" href="#how" aria-label="Scroll to learn more"><span></span></a>
+    </section>
+
+    <!-- ============ INTRO FOR NON-CODERS ============ -->
+    <section id="how" class="section">
+      <div class="section-head reveal">
+        <p class="eyebrow">New here? Start with this</p>
+        <h2>What is Maze Lab?</h2>
+        <p>A <strong>pathfinding algorithm</strong> is a step-by-step recipe a computer follows to get from A to B. Computers can't "see" a whole map at once the way you can. They have to explore it one spot at a time. Different recipes explore in very different ways, and Maze Lab makes those differences visible.</p>
+      </div>
+      <div class="cards-3">
+        <article class="step-card reveal">
+          <span class="step-num">01</span>
+          <h3>Build a maze</h3>
+          <p>Click and drag to draw walls, or let the lab generate a maze for you. Paint <span class="chip-mud">mud</span> on cells that are slow to cross.</p>
+        </article>
+        <article class="step-card reveal">
+          <span class="step-num">02</span>
+          <h3>Pick a strategy</h3>
+          <p>Some algorithms spread out evenly like ripples in a pond. Some dive deep down one corridor. Some make educated guesses about where the goal is.</p>
+        </article>
+        <article class="step-card reveal">
+          <span class="step-num">03</span>
+          <h3>Watch &amp; compare</h3>
+          <p>See every cell the algorithm checks, read along in plain English, then race up to four strategies against each other on the same maze.</p>
+        </article>
+      </div>
+      <div class="reading reveal">
+        <h3>Reading the board</h3>
+        <ul class="legend legend-lg">
+          <li><i class="sw sw-start"></i><span><b>Start</b>where the search begins</span></li>
+          <li><i class="sw sw-end"></i><span><b>Goal</b>where it's trying to get</span></li>
+          <li><i class="sw sw-frontier"></i><span><b>Frontier</b>cells it plans to check next</span></li>
+          <li><i class="sw sw-visited"></i><span><b>Explored</b>cells it has already checked</span></li>
+          <li><i class="sw sw-path"></i><span><b>Path</b>the route it finally found</span></li>
+          <li><i class="sw sw-mud"></i><span><b>Mud</b>costs 5× more to walk through</span></li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- ============ LAB ============ -->
+    <section id="lab" class="section lab" data-status="idle">
+      <div class="lab-head reveal">
+        <div>
+          <p class="eyebrow">The lab</p>
+          <h2>Build it. Solve it.</h2>
+        </div>
+        <div class="mode-tabs" role="tablist" aria-label="Mode">
+          <button class="mode-tab active" role="tab" aria-selected="true" data-mode="explore">Explore</button>
+          <button class="mode-tab" role="tab" aria-selected="false" data-mode="race">Race</button>
+          <span class="mode-ink" aria-hidden="true"></span>
+        </div>
+      </div>
+
+      <!-- Explore view -->
+      <div id="explore-view" class="view">
+        <div class="toolbar panel">
+          <div class="tool-group tool-algo">
+            <span class="tool-label">Algorithm</span>
+            <div class="seg" id="algo-picker" role="radiogroup" aria-label="Algorithm"></div>
+          </div>
+          <div class="tool-group">
+            <span class="tool-label">Generate</span>
+            <div class="seg" id="maze-picker" aria-label="Maze generators"></div>
+          </div>
+          <div class="tool-group">
+            <span class="tool-label">Draw</span>
+            <div class="seg" id="tool-picker" role="radiogroup" aria-label="Drawing tool">
+              <button class="active" data-tool="wall" role="radio" aria-checked="true"><i class="sw sw-wall"></i>Wall</button>
+              <button data-tool="mud" role="radio" aria-checked="false"><i class="sw sw-mud"></i>Mud</button>
+              <button data-tool="erase" role="radio" aria-checked="false"><i class="sw sw-erase"></i>Erase</button>
+            </div>
+          </div>
+          <div class="tool-group tool-speed">
+            <label class="tool-label" for="speed">Speed <output id="speed-out">Normal</output></label>
+            <input type="range" id="speed" class="range" min="1" max="100" value="55">
+          </div>
+          <div class="tool-group">
+            <label class="tool-label" for="size">Grid</label>
+            <select id="size" class="select">
+              <option value="S">Small</option>
+              <option value="M" selected>Medium</option>
+              <option value="L">Large</option>
+            </select>
+          </div>
+          <div class="tool-actions">
+            <button class="btn btn-ghost" id="btn-clear-path">Clear path</button>
+            <button class="btn btn-ghost" id="btn-clear-board">Clear board</button>
+            <button class="btn btn-ghost btn-toggle" id="btn-explain" aria-pressed="false">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2a6 6 0 0 0-3.5 10.9V15h7v-2.1A6 6 0 0 0 10 2Zm-2.5 15h5M8.5 19h3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>Explain
+            </button>
+            <button class="btn btn-ghost" id="btn-step" title="Advance one step">Step</button>
+            <button class="btn btn-primary" id="btn-run">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path class="ico-play" d="M6 4.5v11l9-5.5z" fill="currentColor"/><path class="ico-pause" d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor"/></svg>
+              <span id="run-label">Visualize</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="workspace" id="workspace">
+          <div class="board panel">
+            <div class="statbar">
+              <div class="status"><span class="status-dot"></span><span id="status-text">Ready. Draw some walls or generate a maze.</span></div>
+              <dl class="stats">
+                <div><dt>Explored</dt><dd id="stat-explored">–</dd></div>
+                <div><dt>Path length</dt><dd id="stat-length">–</dd></div>
+                <div><dt>Path cost</dt><dd id="stat-cost">–</dd></div>
+                <div><dt>Compute</dt><dd id="stat-time">–</dd></div>
+              </dl>
+            </div>
+            <div class="board-wrap">
+              <div id="grid" class="grid" aria-label="Maze grid. Click and drag to draw."></div>
+            </div>
+            <ul class="legend">
+              <li><i class="sw sw-start"></i>Start</li>
+              <li><i class="sw sw-end"></i>Goal</li>
+              <li><i class="sw sw-wall"></i>Wall</li>
+              <li><i class="sw sw-mud"></i>Mud (cost 5)</li>
+              <li><i class="sw sw-frontier"></i>Frontier</li>
+              <li><i class="sw sw-visited"></i>Explored</li>
+              <li><i class="sw sw-path"></i>Path</li>
+              <li class="legend-tip">Drag the start or goal to move them</li>
+            </ul>
+          </div>
+
+          <aside id="explain" class="explain panel" aria-label="Explain mode">
+            <div class="explain-head">
+              <span class="eyebrow">Explain mode</span>
+              <button class="icon-btn" id="explain-close" aria-label="Close explain mode">
+                <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+              </button>
+            </div>
+            <div id="explain-card" class="explain-card"></div>
+            <div class="explain-live">
+              <div class="live-head">
+                <h4>Step by step</h4>
+                <span class="live-count" id="explain-count">waiting</span>
+              </div>
+              <ol id="explain-log" class="log" aria-live="polite"></ol>
+              <p class="hint">Cells are labelled (row, column). Slow the speed down or press <kbd>Step</kbd> to follow one move at a time.</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <!-- Race view -->
+      <div id="race-view" class="view" hidden>
+        <div class="toolbar panel race-bar">
+          <div class="tool-group">
+            <span class="tool-label">Racers <small>(pick 2–4)</small></span>
+            <div class="chips" id="race-chips"></div>
+          </div>
+          <div class="tool-group">
+            <span class="tool-label">New maze</span>
+            <div class="seg" id="race-maze"></div>
+          </div>
+          <div class="tool-group tool-speed">
+            <label class="tool-label" for="race-speed">Speed <output id="race-speed-out">Normal</output></label>
+            <input type="range" id="race-speed" class="range" min="1" max="100" value="55">
+          </div>
+          <div class="tool-actions">
+            <button class="btn btn-ghost" id="race-reset">Reset</button>
+            <button class="btn btn-primary" id="race-start">
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2v16M5 3h10l-2.5 3.5L15 10H5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+              <span id="race-label">Start race</span>
+            </button>
+          </div>
+        </div>
+        <p class="race-note">Every racer gets an identical copy of your maze from the Explore tab, including the mud. They all take one step at a time, together.</p>
+        <div class="race-layout">
+          <div class="race-arena" id="race-arena">
+            <div class="race-panels" id="race-panels"></div>
+            <div class="race-banner" id="race-banner" hidden></div>
+          </div>
+          <div class="scoreboard panel">
+            <h3>Scoreboard</h3>
+            <table class="score-table">
+              <thead><tr><th>#</th><th>Algorithm</th><th>Explored</th><th>Path</th><th>Cost</th><th>Time</th></tr></thead>
+              <tbody id="race-board"></tbody>
+            </table>
+            <p class="score-rule"><b>How the winner is chosen:</b> the cheapest path wins. If two racers tie on path cost, the one that explored fewer cells wins. <b>Time</b> is how long each racer took on screen.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ LEARN ============ -->
+    <section id="learn" class="section">
+      <div class="section-head reveal">
+        <p class="eyebrow">Meet the racers</p>
+        <h2>Five ways to search a maze</h2>
+        <p>Each algorithm makes a different trade-off between speed, memory, and whether it can promise you the shortest route.</p>
+      </div>
+      <div class="algo-cards" id="algo-cards"></div>
+      <div class="compare panel reveal">
+        <table class="compare-table" id="compare-table"></table>
+      </div>
+      <p class="footnote reveal"><b>V</b> is the number of cells and <b>E</b> the number of connections between them. On a grid each cell has at most four neighbours, so E ≈ 4V.</p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p><span class="brand-text">Maze<b>Lab</b></span> · A pathfinding playground built with plain HTML, CSS &amp; JavaScript.</p>
+    <p class="footer-links"><a href="#lab" data-goto="explore">Lab</a><a href="#learn">Algorithms</a><a href="https://github.com/ParniyaPeykamiyan/maze-lab" target="_blank" rel="noopener">Source on GitHub</a></p>
+  </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</body>
+</html>
